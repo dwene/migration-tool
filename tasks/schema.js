@@ -1,53 +1,63 @@
-import Listr from "listr";
-import { apiV8, apiV9 } from "../api.js";
-import { typeMap } from "../constants/type-map.js";
-import { interfaceMap } from "../constants/interface-map.js";
+import Listr from 'listr';
+import { apiV8, apiV9 } from '../api.js';
+import { typeMap } from '../constants/type-map.js';
+import { interfaceMap } from '../constants/interface-map.js';
+import * as fs from 'fs';
 
 export async function migrateSchema(context) {
   return new Listr([
     {
-      title: "Downloading Schema",
+      title: 'Downloading Schema',
       task: () => downloadSchema(context),
     },
     {
-      title: "Creating Collections",
+      title: 'Creating Collections',
       task: () => migrateCollections(context),
     },
     {
-      title: "Migrating Relations",
+      title: 'Migrating Relations',
       task: () => migrateRelations(context),
+    },
+    {
+      title: 'Write Context',
+      task: () => writeContext(context),
     },
   ]);
 }
 
+async function writeContext(context) {
+  await fs.promises.writeFile('./context/schema.json', JSON.stringify(context));
+}
+
 async function downloadSchema(context) {
-  const response = await apiV8.get("/collections");
-  context.collections = response.data.data.filter(
-    (collection) => collection.collection.startsWith("directus_") === false
-  ).filter(
-    (collection) => !context.skipCollections.includes(collection.collection)
-  );
+  const response = await apiV8.get('/collections');
+  context.collections = response.data.data
+    .filter(
+      collection => collection.collection.startsWith('directus_') === false
+    )
+    .filter(
+      collection => !context.skipCollections.includes(collection.collection)
+    );
 }
 
 async function migrateCollections(context) {
   return new Listr(
-    context.collections
-      .map((collection) => ({
-        title: collection.collection,
-        task: migrateCollection(collection),
-      }))
+    context.collections.map(collection => ({
+      title: collection.collection,
+      task: migrateCollection(collection),
+    }))
   );
 }
 
 function migrateFieldOptions(fieldDetails) {
-  if (fieldDetails.interface === "divider") {
+  if (fieldDetails.interface === 'divider') {
     return {
       title: fieldDetails.options.title,
       marginTop: fieldDetails.options.margin,
     };
   }
 
-  if (fieldDetails.interface === "status") {
+  if (fieldDetails.interface === 'status') {
     return {
       choices: Object.values(fieldDetails.options.status_mapping).map(
         ({ name, value }) => ({
@@ -58,7 +68,7 @@ function migrateFieldOptions(fieldDetails) {
     };
   }
 
-  if (fieldDetails.interface === "dropdown") {
+  if (fieldDetails.interface === 'dropdown') {
     return {
       choices: Object.entries(fieldDetails.options.choices).map(
         ([value, text]) => ({
@@ -70,9 +80,9 @@ function migrateFieldOptions(fieldDetails) {
     };
   }
 
-  if (fieldDetails.interface === "repeater") {
+  if (fieldDetails.interface === 'repeater') {
     return {
-      fields: fieldDetails.options.fields.map((field) => ({
+      fields: fieldDetails.options.fields.map(field => ({
         name: field.field,
         type: field.type,
         field: field.field,
@@ -88,7 +98,7 @@ function migrateFieldOptions(fieldDetails) {
     };
   }
 
-  if (fieldDetails.interface === "checkboxes") {
+  if (fieldDetails.interface === 'checkboxes') {
     return {
       choices: Object.entries(fieldDetails.options.choices).map(
         ([value, text]) => ({
@@ -96,16 +106,15 @@ function migrateFieldOptions(fieldDetails) {
           value,
         })
       ),
-      allowOther: fieldDetails.options.allow_other
+      allowOther: fieldDetails.options.allow_other,
     };
   }
-
 }
 
 function migrateCollection(collection) {
   return async () => {
     const statusField = Object.values(collection.fields).find(
-      (field) => field.interface === "status"
+      field => field.interface === 'status'
     );
 
     const collectionV9 = {
@@ -123,32 +132,31 @@ function migrateCollection(collection) {
         ),
         sort_field:
           Object.entries(collection.fields).find(([field, details]) => {
-            return (details.type || "").toLowerCase() === "sort";
+            return (details.type || '').toLowerCase() === 'sort';
           })?.field || null,
         ...(statusField
           ? {
               archive_field: statusField.field,
               archive_value: Object.values(
                 statusField.options.status_mapping
-              ).find((option) => option.soft_delete).value,
+              ).find(option => option.soft_delete).value,
               unarchive_value: Object.values(
                 statusField.options.status_mapping
-              ).find((option) => !option.soft_delete && !option.published)
-                .value,
+              ).find(option => !option.soft_delete && !option.published).value,
             }
           : {}),
       },
       schema: {},
-      fields: Object.values(collection.fields).map((details) => {
+      fields: Object.values(collection.fields).map(details => {
         return {
           field: details.field,
           type:
-            details.datatype?.toLowerCase() === "text"
-              ? "text"
+            details.datatype?.toLowerCase() === 'text'
+              ? 'text'
               : typeMap[details.type.toLowerCase()],
           meta: {
             note: details.note,
-            interface: interfaceMap[(details.interface || "").toLowerCase()],
+            interface: interfaceMap[(details.interface || '').toLowerCase()],
             translations: details.translation?.map(
               ({ locale, translation }) => ({
                 language: locale,
@@ -163,7 +171,7 @@ function migrateCollection(collection) {
             options: migrateFieldOptions(details),
           },
           schema:
-            ["alias", "o2m"].includes(typeMap[details.type.toLowerCase()]) ===
+            ['alias', 'o2m'].includes(typeMap[details.type.toLowerCase()]) ===
             false
               ? {
                   has_auto_increment: details.auto_increment,
@@ -172,19 +180,19 @@ function migrateCollection(collection) {
                   is_nullable: details.required === false,
                   max_length: details.length,
                   numeric_precision:
-                    (details.length || "").split(",")[0] || null,
-                  numeric_scale: (details.length || "").split(",")[1] || null,
+                    (details.length || '').split(',')[0] || null,
+                  numeric_scale: (details.length || '').split(',')[1] || null,
                 }
               : undefined,
         };
       }),
     };
 
-    await apiV9.post("/collections", collectionV9);
+    await apiV9.post('/collections', collectionV9);
   };
 
   function extractValue(details) {
-    if (typeMap[details.type.toLowerCase()] === "json") {
+    if (typeMap[details.type.toLowerCase()] === 'json') {
       try {
         JSON.parse(details.default_value);
       } catch (ex) {
@@ -197,95 +205,133 @@ function migrateCollection(collection) {
 
   function extractSpecial(details) {
     const type = details.type.toLowerCase();
-    if (type === "alias") {
-      return ["alias", "no-data"];
+    if (type === 'alias') {
+      return ['alias', 'no-data'];
     }
 
-    if (type === "boolean") {
-      return ["boolean"];
+    if (type === 'boolean') {
+      return ['boolean'];
     }
 
-    if (type === "hash") {
-      return ["hash"];
+    if (type === 'hash') {
+      return ['hash'];
     }
 
-    if (type === "json") {
-      return ["json"];
+    if (type === 'json') {
+      return ['json'];
     }
 
-    if (type === "uuid") {
-      return ["uuid"];
+    if (type === 'uuid') {
+      return ['uuid'];
     }
 
-    if (type === "owner") {
-      return ["user-created"];
+    if (type === 'owner') {
+      return ['user-created'];
     }
 
-    if (type === "user_updated") {
-      return ["user-updated"];
+    if (type === 'user_updated') {
+      return ['user-updated'];
     }
 
-    if (type === "datetime_created") {
-      return ["date-created"];
+    if (type === 'datetime_created') {
+      return ['date-created'];
     }
 
-    if (type === "datetime_updated") {
-      return ["date-updated"];
+    if (type === 'datetime_updated') {
+      return ['date-updated'];
     }
 
-    if (type === "csv") {
-      return ["csv"];
+    if (type === 'csv') {
+      return ['csv'];
     }
 
-    if (type === "o2m") {
-      return ["o2m"];
+    if (type === 'o2m') {
+      return ['o2m'];
     }
 
-    if (type === "m2o") {
-      return ["m2o"];
+    if (type === 'm2o') {
+      return ['m2o'];
     }
   }
 }
 
 async function migrateRelations(context) {
-  const relations = await apiV8.get("/relations", { params: { limit: -1 } });
+  const relations = await apiV8.get('/relations', { params: { limit: -1 } });
 
   const relationsV9 = relations.data.data
-    .filter((relation) => {
+    .filter(relation => {
       return (
-        (relation.collection_many.startsWith("directus_") &&
-          relation.collection_one.startsWith("directus_")) === false
+        (relation.collection_many.startsWith('directus_') &&
+          relation.collection_one.startsWith('directus_')) === false
       );
     })
-    .map((relation) => ({
+    .map(relation => ({
       // @NOTE: one_primary will be removed from Directus soon, so i'm not too worried about it here
-      many_collection: relation.collection_many,
-      many_field: relation.field_many,
-      many_primary: "id",
-      one_collection: relation.collection_one,
-      one_field: relation.field_one,
-      one_primary: "id",
-      junction_field: relation.junction_field,
+      meta: {
+        many_collection: relation.collection_many,
+        many_field: relation.field_many,
+        many_primary: 'id',
+        one_collection: relation.collection_one,
+        one_field: relation.field_one,
+        one_primary: 'id',
+        junction_field: relation.junction_field,
+      },
+      field: relation.field_many,
+      collection: relation.collection_many,
+      related_collection: relation.collection_one,
+      schema: null,
     }));
 
+  context.relationsV9 = relationsV9;
+
   const systemFields = context.collections
-    .map((collection) =>
+    .map(collection =>
       Object.values(collection.fields)
-        .filter((details) => {
-          return details.type === "file" || details.type.startsWith("user");
+        .filter(details => {
+          return details.type === 'file' || details.type.startsWith('user');
         })
-        .map((field) => ({
-          many_field: field.field,
-          many_collection: collection.collection,
-          many_primary: "id",
-          one_collection:
-            field.type === "file" ? "directus_files" : "directus_users",
-          one_primary: "id",
+        .map(field => ({
+          meta: {
+            many_field: field.field,
+            many_collection: collection.collection,
+            many_primary: 'id',
+            one_collection:
+              field.type === 'file' ? 'directus_files' : 'directus_users',
+            one_primary: 'id',
+          },
+          field: field.field,
+          collection: collection.collection,
+          related_collection:
+            field.type === 'file' ? 'directus_files' : 'directus_users',
+          schema: null,
         }))
     )
     .flat();
 
-  await apiV9.post("/relations", [...relationsV9, ...systemFields]);
+  // If you want it to skip the errors it encounters, you can comment out here. Then you need to add missing relations manually
+  // try {
+  //   await Promise.allSettled(
+  //     [...relationsV9, ...systemFields].map(
+  //       async relation => await apiV9.post('/relations', relation)
+  //     )
+  //   );
+  // } catch (err) {
+  //   console.log(err);
+  // }
+
+  let failures = 0;
+  for (const relation of [...relationsV9, ...systemFields]) {
+    try {
+      await apiV9.post('/relations', relation);
+    } catch (ex) {
+      console.log('Failed to migrate relation', relation, ex);
+      failures++;
+    }
+  }
+
+  if (failures > 2) {
+    throw new Error(`Failed to migrate ${failures} relations`);
+  }
 
   context.relations = [...relationsV9, ...systemFields];
 }
